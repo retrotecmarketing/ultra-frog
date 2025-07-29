@@ -43,20 +43,23 @@ class UltraFrogCrawler:
         if self.ignore_robots:
             return True
         
-        domain = urlparse(url).netloc
-        if domain not in self.robots_cache:
-            try:
-                rp = RobotFileParser()
-                rp.set_url(f"http://{domain}/robots.txt")
-                rp.read()
-                self.robots_cache[domain] = rp
-            except:
-                self.robots_cache[domain] = None
-        
-        if self.robots_cache[domain] is None:
+        try:
+            domain = urlparse(url).netloc
+            if domain not in self.robots_cache:
+                try:
+                    rp = RobotFileParser()
+                    rp.set_url(f"http://{domain}/robots.txt")
+                    rp.read()
+                    self.robots_cache[domain] = rp
+                except:
+                    self.robots_cache[domain] = None
+            
+            if self.robots_cache[domain] is None:
+                return True
+            
+            return self.robots_cache[domain].can_fetch('*', url)
+        except:
             return True
-        
-        return self.robots_cache[domain].can_fetch('*', url)
     
     def extract_sitemap_urls(self, sitemap_url):
         """Extract URLs from XML sitemap"""
@@ -311,6 +314,8 @@ def crawl_website(start_url, max_urls, progress_bar, status_text, ignore_robots=
             if st.session_state.stop_crawling:
                 break
     
+    return crawl_data  # Fixed: Always return crawl_data
+
 def crawl_from_list(url_list, progress_bar, status_text, ignore_robots=False):
     """Crawl URLs from a provided list"""
     crawler = UltraFrogCrawler(len(url_list), ignore_robots)
@@ -322,6 +327,9 @@ def crawl_from_list(url_list, progress_bar, status_text, ignore_robots=False):
         for url in url_list:
             if not st.session_state.stop_crawling and crawler.can_fetch(url.strip()):
                 valid_urls.append(url.strip())
+        
+        if not valid_urls:
+            return crawl_data
         
         futures = [executor.submit(crawler.extract_page_data, url) for url in valid_urls]
         
@@ -454,22 +462,32 @@ with st.sidebar:
             progress_bar = st.progress(0)
             status_text = st.empty()
             
-            with st.spinner("🐸 Ultra Frog is crawling..."):
-                if crawl_mode == "🕷️ Spider Crawl (Follow Links)":
-                    crawl_data = crawl_website(start_url, max_urls, progress_bar, status_text, ignore_robots)
-                elif crawl_mode == "📝 List Mode (Upload URLs)":
-                    crawl_data = crawl_from_list(url_list, progress_bar, status_text, ignore_robots)
-                else:  # Sitemap crawl
-                    crawl_data = crawl_from_sitemap(sitemap_url, max_urls, progress_bar, status_text, ignore_robots)
+            try:
+                with st.spinner("🐸 Ultra Frog is crawling..."):
+                    if crawl_mode == "🕷️ Spider Crawl (Follow Links)":
+                        crawl_data = crawl_website(start_url, max_urls, progress_bar, status_text, ignore_robots)
+                    elif crawl_mode == "📝 List Mode (Upload URLs)":
+                        crawl_data = crawl_from_list(url_list, progress_bar, status_text, ignore_robots)
+                    else:  # Sitemap crawl
+                        crawl_data = crawl_from_sitemap(sitemap_url, max_urls, progress_bar, status_text, ignore_robots)
+                    
+                    # Ensure crawl_data is not None
+                    if crawl_data is None:
+                        crawl_data = []
+                    
+                    st.session_state.crawl_data = crawl_data
+                    st.session_state.crawling = False
+                    st.session_state.stop_crawling = False
                 
-                st.session_state.crawl_data = crawl_data
+                if st.session_state.stop_crawling:
+                    st.warning("⛔ Crawl stopped by user")
+                else:
+                    st.success(f"✅ Crawl completed! Found {len(crawl_data)} URLs")
+                    
+            except Exception as e:
+                st.error(f"Error during crawling: {str(e)}")
                 st.session_state.crawling = False
                 st.session_state.stop_crawling = False
-            
-            if st.session_state.stop_crawling:
-                st.warning("⛔ Crawl stopped by user")
-            else:
-                st.success(f"✅ Crawl completed! Found {len(crawl_data)} URLs")
         else:
             st.error("Please provide valid input for the selected crawl mode")
     
@@ -507,13 +525,16 @@ if st.session_state.crawl_data:
     with col1:
         st.metric("Total URLs", len(df))
     with col2:
-        st.metric("✅ Indexable", len(df[df['indexability'] == 'Indexable']))
+        indexable_count = len(df[df['indexability'] == 'Indexable'])
+        st.metric("✅ Indexable", indexable_count)
     with col3:
-        st.metric("❌ Non-Indexable", len(df[df['indexability'] == 'Non-Indexable']))
+        non_indexable_count = len(df[df['indexability'] == 'Non-Indexable'])
+        st.metric("❌ Non-Indexable", non_indexable_count)
     with col4:
-        st.metric("🔄 Redirects", len(df[df['redirect_count'] > 0]))
+        redirect_count = len(df[df['redirect_count'] > 0])
+        st.metric("🔄 Redirects", redirect_count)
     with col5:
-        avg_response = df['response_time'].mean()
+        avg_response = df['response_time'].mean() if len(df) > 0 else 0
         st.metric("⚡ Avg Response", f"{avg_response:.2f}s")
     
     # Enhanced tabs
@@ -569,6 +590,8 @@ if st.session_state.crawl_data:
             st.warning(f"⚠️ {missing_alt} images missing alt text")
             csv = img_df.to_csv(index=False)
             st.download_button("📥 Download Images Report", csv, "ultra_frog_images.csv", "text/csv")
+        else:
+            st.info("🔍 No images found")
     
     with tab4:
         st.subheader("📝 Page Titles Optimization")
