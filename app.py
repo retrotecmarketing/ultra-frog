@@ -101,7 +101,7 @@ class UltraFrogCrawler:
         
     def extract_page_data(self, url):
         try:
-            response = self.session.get(url, timeout=15, allow_redirects=True)
+            response = self.session.get(url, timeout=10, allow_redirects=True)
             soup = BeautifulSoup(response.content, 'html.parser')
             
             # Basic SEO data
@@ -148,21 +148,15 @@ class UltraFrogCrawler:
                 else:
                     external_links.append({'url': href, 'anchor_text': link_text})
             
-            # Images analysis
+            # Images analysis - simplified for speed
             images = []
             for img in soup.find_all('img'):
                 img_src = urljoin(url, img.get('src', ''))
-                try:
-                    img_response = self.session.head(img_src, timeout=5)
-                    img_size = int(img_response.headers.get('content-length', 0))
-                except:
-                    img_size = 0
-                
                 images.append({
                     'src': img_src,
                     'alt': img.get('alt', ''),
                     'title': img.get('title', ''),
-                    'size_bytes': img_size,
+                    'size_bytes': 0,  # Skip size check for speed
                     'width': img.get('width', ''),
                     'height': img.get('height', '')
                 })
@@ -269,91 +263,136 @@ class UltraFrogCrawler:
             return 'Non-Indexable'
         return 'Indexable'
 
-def crawl_website(start_url, max_urls, progress_bar, status_text, ignore_robots=False):
+def crawl_website(start_url, max_urls, progress_container, ignore_robots=False):
     crawler = UltraFrogCrawler(max_urls, ignore_robots)
     urls_to_visit = deque([start_url])
     visited_urls = set()
     crawl_data = []
     
-    with ThreadPoolExecutor(max_workers=8) as executor:
-        while urls_to_visit and len(visited_urls) < max_urls and not st.session_state.stop_crawling:
+    # Create progress elements
+    progress_bar = progress_container.progress(0)
+    status_text = progress_container.empty()
+    
+    with ThreadPoolExecutor(max_workers=5) as executor:
+        while urls_to_visit and len(visited_urls) < max_urls:
+            # Check stop condition at the beginning of each batch
+            if st.session_state.stop_crawling:
+                break
+                
+            # Get batch of URLs to process
             current_batch = []
-            for _ in range(min(15, len(urls_to_visit))):
+            batch_size = min(10, len(urls_to_visit), max_urls - len(visited_urls))
+            
+            for _ in range(batch_size):
                 if urls_to_visit and not st.session_state.stop_crawling:
                     url = urls_to_visit.popleft()
-                    if crawler.can_fetch(url):
+                    if url not in visited_urls and crawler.can_fetch(url):
                         current_batch.append(url)
+                        visited_urls.add(url)  # Add immediately to prevent duplicates
             
             if not current_batch:
                 break
-                
-            futures = [executor.submit(crawler.extract_page_data, url) for url in current_batch]
             
-            for future in as_completed(futures):
+            # Submit all URLs in batch
+            future_to_url = {executor.submit(crawler.extract_page_data, url): url for url in current_batch}
+            
+            # Process completed futures
+            for future in as_completed(future_to_url):
+                # Check stop condition for each completed request
                 if st.session_state.stop_crawling:
+                    # Cancel remaining futures
+                    for f in future_to_url:
+                        f.cancel()
                     break
+                    
                 try:
-                    page_data = future.result()
-                    if page_data['url'] not in visited_urls:
-                        visited_urls.add(page_data['url'])
-                        crawl_data.append(page_data)
-                        
-                        # Add new internal links to queue
+                    page_data = future.result(timeout=15)
+                    crawl_data.append(page_data)
+                    
+                    # Add new internal links to queue (but check if we should stop first)
+                    if not st.session_state.stop_crawling:
                         for link_data in page_data.get('internal_links', []):
                             link_url = link_data['url']
-                            if link_url not in visited_urls and link_url not in urls_to_visit:
+                            if (link_url not in visited_urls and 
+                                link_url not in urls_to_visit and 
+                                len(visited_urls) + len(urls_to_visit) < max_urls):
                                 urls_to_visit.append(link_url)
-                        
-                        progress = min(len(visited_urls) / max_urls, 1.0)
-                        progress_bar.progress(progress)
-                        status_text.text(f"Crawled: {len(visited_urls)} URLs | Queue: {len(urls_to_visit)}")
-                        
+                    
+                    # Update progress
+                    progress = min(len(crawl_data) / max_urls, 1.0)
+                    progress_bar.progress(progress)
+                    status_text.text(f"Crawled: {len(crawl_data)} URLs | Queue: {len(urls_to_visit)} | Stop: {'Yes' if st.session_state.stop_crawling else 'No'}")
+                    
+                    # Force UI update
+                    time.sleep(0.01)
+                    
                 except Exception as e:
                     st.error(f"Error processing URL: {e}")
             
+            # Final check before next batch
             if st.session_state.stop_crawling:
                 break
     
-    return crawl_data  # Fixed: Always return crawl_data
+    return crawl_data
 
-def crawl_from_list(url_list, progress_bar, status_text, ignore_robots=False):
+def crawl_from_list(url_list, progress_container, ignore_robots=False):
     """Crawl URLs from a provided list"""
     crawler = UltraFrogCrawler(len(url_list), ignore_robots)
     crawl_data = []
     
-    with ThreadPoolExecutor(max_workers=8) as executor:
-        # Filter URLs based on robots.txt if needed
-        valid_urls = []
-        for url in url_list:
-            if not st.session_state.stop_crawling and crawler.can_fetch(url.strip()):
-                valid_urls.append(url.strip())
-        
-        if not valid_urls:
-            return crawl_data
-        
-        futures = [executor.submit(crawler.extract_page_data, url) for url in valid_urls]
-        
-        completed = 0
-        for future in as_completed(futures):
+    # Create progress elements
+    progress_bar = progress_container.progress(0)
+    status_text = progress_container.empty()
+    
+    # Filter URLs based on robots.txt if needed
+    valid_urls = []
+    for url in url_list:
+        if crawler.can_fetch(url.strip()):
+            valid_urls.append(url.strip())
+    
+    if not valid_urls:
+        return crawl_data
+    
+    with ThreadPoolExecutor(max_workers=5) as executor:
+        # Process URLs in batches
+        batch_size = 10
+        for i in range(0, len(valid_urls), batch_size):
             if st.session_state.stop_crawling:
                 break
-            try:
-                page_data = future.result()
-                crawl_data.append(page_data)
-                completed += 1
                 
-                progress = completed / len(valid_urls)
-                progress_bar.progress(progress)
-                status_text.text(f"Processed: {completed}/{len(valid_urls)} URLs")
-                
-            except Exception as e:
-                st.error(f"Error processing URL: {e}")
+            batch = valid_urls[i:i + batch_size]
+            future_to_url = {executor.submit(crawler.extract_page_data, url): url for url in batch}
+            
+            for future in as_completed(future_to_url):
+                if st.session_state.stop_crawling:
+                    # Cancel remaining futures
+                    for f in future_to_url:
+                        f.cancel()
+                    break
+                    
+                try:
+                    page_data = future.result(timeout=15)
+                    crawl_data.append(page_data)
+                    
+                    progress = len(crawl_data) / len(valid_urls)
+                    progress_bar.progress(progress)
+                    status_text.text(f"Processed: {len(crawl_data)}/{len(valid_urls)} URLs | Stop: {'Yes' if st.session_state.stop_crawling else 'No'}")
+                    
+                    # Force UI update
+                    time.sleep(0.01)
+                    
+                except Exception as e:
+                    st.error(f"Error processing URL: {e}")
     
     return crawl_data
 
-def crawl_from_sitemap(sitemap_url, max_urls, progress_bar, status_text, ignore_robots=False):
+def crawl_from_sitemap(sitemap_url, max_urls, progress_container, ignore_robots=False):
     """Crawl URLs from XML sitemap"""
     crawler = UltraFrogCrawler(max_urls, ignore_robots)
+    
+    # Create progress elements
+    progress_bar = progress_container.progress(0)
+    status_text = progress_container.empty()
     
     # Extract URLs from sitemap
     status_text.text("🗺️ Extracting URLs from sitemap...")
@@ -370,7 +409,7 @@ def crawl_from_sitemap(sitemap_url, max_urls, progress_bar, status_text, ignore_
     st.info(f"Found {len(sitemap_urls)} URLs in sitemap")
     
     # Crawl the URLs
-    return crawl_from_list(sitemap_urls, progress_bar, status_text, ignore_robots)
+    return crawl_from_list(sitemap_urls, progress_container, ignore_robots)
 
 # Custom CSS
 st.markdown("""
@@ -433,6 +472,11 @@ with st.sidebar:
     with col2:
         stop_btn = st.button("⛔ Stop Crawl", disabled=not st.session_state.crawling)
     
+    if stop_btn:
+        st.session_state.stop_crawling = True
+        st.session_state.crawling = False
+        st.rerun()
+    
     if start_btn:
         # Validate inputs based on mode
         valid_input = False
@@ -458,42 +502,9 @@ with st.sidebar:
             st.session_state.stop_crawling = False
             st.session_state.crawl_data = []
             st.session_state.visited_urls = set()
-            
-            progress_bar = st.progress(0)
-            status_text = st.empty()
-            
-            try:
-                with st.spinner("🐸 Ultra Frog is crawling..."):
-                    if crawl_mode == "🕷️ Spider Crawl (Follow Links)":
-                        crawl_data = crawl_website(start_url, max_urls, progress_bar, status_text, ignore_robots)
-                    elif crawl_mode == "📝 List Mode (Upload URLs)":
-                        crawl_data = crawl_from_list(url_list, progress_bar, status_text, ignore_robots)
-                    else:  # Sitemap crawl
-                        crawl_data = crawl_from_sitemap(sitemap_url, max_urls, progress_bar, status_text, ignore_robots)
-                    
-                    # Ensure crawl_data is not None
-                    if crawl_data is None:
-                        crawl_data = []
-                    
-                    st.session_state.crawl_data = crawl_data
-                    st.session_state.crawling = False
-                    st.session_state.stop_crawling = False
-                
-                if st.session_state.stop_crawling:
-                    st.warning("⛔ Crawl stopped by user")
-                else:
-                    st.success(f"✅ Crawl completed! Found {len(crawl_data)} URLs")
-                    
-            except Exception as e:
-                st.error(f"Error during crawling: {str(e)}")
-                st.session_state.crawling = False
-                st.session_state.stop_crawling = False
+            st.rerun()
         else:
             st.error("Please provide valid input for the selected crawl mode")
-    
-    if stop_btn:
-        st.session_state.stop_crawling = True
-        st.session_state.crawling = False
     
     if st.button("🗑️ Clear All Data"):
         st.session_state.crawl_data = []
@@ -515,8 +526,45 @@ with st.sidebar:
     - 🎯 Advanced SEO insights
     """)
 
+# Handle crawling in main area
+if st.session_state.crawling:
+    st.header("🐸 Ultra Frog is Crawling...")
+    
+    progress_container = st.container()
+    
+    try:
+        if crawl_mode == "🕷️ Spider Crawl (Follow Links)":
+            crawl_data = crawl_website(start_url, max_urls, progress_container, ignore_robots)
+        elif crawl_mode == "📝 List Mode (Upload URLs)":
+            # Get the URL list again
+            if uploaded_file:
+                content = uploaded_file.read().decode('utf-8')
+                url_list = [line.strip() for line in content.split('\n') if line.strip()]
+            else:
+                url_list = [line.strip() for line in url_list_text.split('\n') if line.strip()]
+            crawl_data = crawl_from_list(url_list, progress_container, ignore_robots)
+        else:  # Sitemap crawl
+            crawl_data = crawl_from_sitemap(sitemap_url, max_urls, progress_container, ignore_robots)
+        
+        # Store results
+        st.session_state.crawl_data = crawl_data if crawl_data else []
+        st.session_state.crawling = False
+        st.session_state.stop_crawling = False
+        
+        if st.session_state.stop_crawling:
+            st.warning("⛔ Crawl stopped by user")
+        else:
+            st.success(f"✅ Crawl completed! Found {len(crawl_data)} URLs")
+        
+        st.rerun()
+        
+    except Exception as e:
+        st.error(f"Error during crawling: {str(e)}")
+        st.session_state.crawling = False
+        st.session_state.stop_crawling = False
+
 # Main content area
-if st.session_state.crawl_data:
+elif st.session_state.crawl_data:
     df = pd.DataFrame(st.session_state.crawl_data)
     
     # Enhanced summary stats
