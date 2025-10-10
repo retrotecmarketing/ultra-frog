@@ -837,7 +837,7 @@ elif st.session_state.crawl_data:
 else:
     st.info("👈 Configure your crawl settings and click '🚀 Start Crawl' to begin Ultra Frog analysis")
     
-    st.header("🐸 Ultra Frog Features")
+    st.header("🐸 Ultra Frog SEO Crawler Features")
     col1, col2, col3 = st.columns(3)
     
     with col1:
