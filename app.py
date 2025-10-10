@@ -12,7 +12,9 @@ import xml.etree.ElementTree as ET
 from urllib.robotparser import RobotFileParser
 
 # Page config
-st.set_page_config(page_title="Ultra Frog SEO Crawler", layout="wide", page_icon="🐸")
+st.title("Ultra Frog SEO Crawler 🐸")
+st.header("A powerful open-source SEO crawler for developers and power users. Crawl, analyze, and optimize websites effortlessly.")
+
 
 # Initialize session state
 if 'crawl_data' not in st.session_state:
