@@ -1,0 +1,17 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(Select-Object Id, ProcessName, Path)",
+      "Bash(pip:*)",
+      "Read(//c/Users/mitch/AppData/Local/Programs/**)",
+      "Bash(winget search:*)",
+      "Bash(winget install:*)",
+      "Read(//c/Program Files/**)",
+      "Bash(\"/c/Users/mitch/AppData/Local/Programs/Python/Python311/python.exe\" -m pip install -r requirements.txt)",
+      "Bash(\"/c/Users/mitch/AppData/Local/Programs/Python/Python311/python.exe\" -m streamlit run app.py)",
+      "Bash(\"/c/Users/mitch/AppData/Local/Programs/Python/Python311/python.exe\" -m streamlit run app.py --server.headless=true)"
+    ],
+    "deny": [],
+    "ask": []
+  }
+}
