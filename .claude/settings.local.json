@@ -13,7 +13,9 @@
       "Bash(git config:*)",
       "Bash(git remote set-url:*)",
       "Bash(git fetch:*)",
-      "Bash(timeout 10 git ls-remote:*)"
+      "Bash(timeout 10 git ls-remote:*)",
+      "Bash(git pull:*)",
+      "Bash(git push)"
     ],
     "deny": [],
     "ask": []
