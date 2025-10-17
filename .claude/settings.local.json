@@ -9,7 +9,11 @@
       "Read(//c/Program Files/**)",
       "Bash(\"/c/Users/mitch/AppData/Local/Programs/Python/Python311/python.exe\" -m pip install -r requirements.txt)",
       "Bash(\"/c/Users/mitch/AppData/Local/Programs/Python/Python311/python.exe\" -m streamlit run app.py)",
-      "Bash(\"/c/Users/mitch/AppData/Local/Programs/Python/Python311/python.exe\" -m streamlit run app.py --server.headless=true)"
+      "Bash(\"/c/Users/mitch/AppData/Local/Programs/Python/Python311/python.exe\" -m streamlit run app.py --server.headless=true)",
+      "Bash(git config:*)",
+      "Bash(git remote set-url:*)",
+      "Bash(git fetch:*)",
+      "Bash(timeout 10 git ls-remote:*)"
     ],
     "deny": [],
     "ask": []
